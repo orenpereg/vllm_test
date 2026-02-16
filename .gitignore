@@ -6,6 +6,7 @@ env/
 ENV/
 
 # Environment variables
+.env
 .env/
 
 # Python cache
