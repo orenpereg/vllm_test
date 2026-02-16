@@ -33,7 +33,8 @@ vllm_test/
 
 - Python 3.8+
 - vLLM installation (either local or Docker)
-- Intel GPUs
+- Docker (for containerized deployment) - [Installation guide](https://docs.docker.com/engine/install/)
+- Intel GPUs or compatible hardware
 - Required Python packages: `requests`, `pandas`, `matplotlib`
 
 ## Setup

@@ -9,24 +9,62 @@ import matplotlib.pyplot as plt
 import sys
 import os
 
-def run_benchmark_for_batch_size(batch_size, max_tokens=100, timeout=600):
+def run_benchmark_for_batch_size(batch_size, max_tokens=100, timeout=600, 
+                                 random_input_len=None, random_output_len=None,
+                                 use_builtin=False, num_prompts=100):
     """
     Run benchmark for a specific batch size and extract throughput metrics
+    
+    Args:
+        batch_size: Number of concurrent requests
+        max_tokens: Max tokens per request (custom mode)
+        timeout: Timeout in seconds
+        random_input_len: Random input length (built-in mode)
+        random_output_len: Random output length (built-in mode)
+        use_builtin: Whether to use built-in vLLM benchmark
+        num_prompts: Number of prompts (built-in mode)
     """
     print(f"\n{'='*80}")
-    print(f"Running benchmark with batch_size={batch_size} (timeout={timeout}s)")
+    print(f"Running benchmark with concurrency={batch_size} (timeout={timeout}s)")
+    if random_input_len:
+        print(f"  Input length: {random_input_len} tokens")
+    if random_output_len:
+        print(f"  Output length: {random_output_len} tokens")
     print(f"{'='*80}")
     
-    cmd = [
-        "python",
-        "/root/oren/benchmark_vllm.py",
-        "--batch-size", str(batch_size),
-        "--max-tokens", str(max_tokens),
-        "--prompt", "Write a short poem about artificial intelligence."
-    ]
+    cmd = ["python3", "/home/oren/vllm_test/benchmark_vllm.py"]
+    
+    if use_builtin:
+        # Use built-in benchmark mode (requires vllm CLI)
+        cmd.extend([
+            "--use-builtin",
+            "--max-concurrency", str(batch_size),
+            "--num-prompts", str(num_prompts)
+        ])
+        if random_input_len:
+            cmd.extend(["--random-input-len", str(random_input_len)])
+        if random_output_len:
+            cmd.extend(["--random-output-len", str(random_output_len)])
+    else:
+        # Use custom API mode (works with Docker server)
+        cmd.extend([
+            "--batch-size", str(batch_size),
+        ])
+        
+        # Add random lengths if specified (custom mode now supports this)
+        if random_input_len:
+            cmd.extend(["--random-input-len", str(random_input_len)])
+        if random_output_len:
+            cmd.extend(["--random-output-len", str(random_output_len)])
+        else:
+            cmd.extend(["--max-tokens", str(max_tokens)])
+        
+        # Use default prompt if no random input length
+        if not random_input_len:
+            cmd.extend(["--prompt", "Write a short poem about artificial intelligence."])
     
     try:
-        print(f"Starting benchmark... (this may take a while for large batch sizes)")
+        print(f"Starting benchmark... (this may take a while for large concurrency)")
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -41,24 +79,39 @@ def run_benchmark_for_batch_size(batch_size, max_tokens=100, timeout=600):
         per_request_throughput = None
         total_system_throughput = None
         
-        # Look for the throughput lines in individual results
-        for line in output.split('\n'):
-            if 'Throughput:' in line and 'tokens/s' in line:
-                match = re.search(r'(\d+\.\d+)\s+tokens/s', line)
-                if match and per_request_throughput is None:
-                    per_request_throughput = float(match.group(1))
-            elif 'Per-Request Throughput:' in line:
-                match = re.search(r'(\d+\.\d+)\s+tokens/s', line)
-                if match:
-                    per_request_throughput = float(match.group(1))
-            elif 'Total System Throughput:' in line:
-                match = re.search(r'(\d+\.\d+)\s+tokens/s', line)
-                if match:
-                    total_system_throughput = float(match.group(1))
-        
-        # Fallback: calculate from per-request if total not found
-        if per_request_throughput and not total_system_throughput:
-            total_system_throughput = per_request_throughput * batch_size
+        if use_builtin:
+            # Parse built-in benchmark output (when using vllm CLI)
+            # Look for metrics like: "Throughput: 123.45 requests/s, 6789.01 tokens/s"
+            for line in output.split('\n'):
+                # vLLM built-in benchmark outputs: "Throughput: X requests/s, Y tokens/s"
+                if 'Throughput:' in line and 'tokens/s' in line:
+                    # Extract tokens/s value
+                    match = re.search(r'(\d+\.\d+)\s+tokens/s', line)
+                    if match:
+                        total_system_throughput = float(match.group(1))
+                        # For built-in mode, approximate per-request throughput
+                        per_request_throughput = total_system_throughput / batch_size if batch_size > 0 else total_system_throughput
+                        break
+        else:
+            # Parse custom API mode output (HTTP requests to Docker server)
+            # Look for the throughput lines in individual results
+            for line in output.split('\n'):
+                if 'Throughput:' in line and 'tokens/s' in line:
+                    match = re.search(r'(\d+\.\d+)\s+tokens/s', line)
+                    if match and per_request_throughput is None:
+                        per_request_throughput = float(match.group(1))
+                elif 'Per-Request Throughput:' in line:
+                    match = re.search(r'(\d+\.\d+)\s+tokens/s', line)
+                    if match:
+                        per_request_throughput = float(match.group(1))
+                elif 'Total System Throughput:' in line:
+                    match = re.search(r'(\d+\.\d+)\s+tokens/s', line)
+                    if match:
+                        total_system_throughput = float(match.group(1))
+            
+            # Fallback: calculate from per-request if total not found
+            if per_request_throughput and not total_system_throughput:
+                total_system_throughput = per_request_throughput * batch_size
         
         return {
             'batch_size': batch_size,
@@ -67,10 +120,10 @@ def run_benchmark_for_batch_size(batch_size, max_tokens=100, timeout=600):
         }
     
     except subprocess.TimeoutExpired:
-        print(f"ERROR: Benchmark timed out for batch_size={batch_size}")
+        print(f"ERROR: Benchmark timed out for concurrency={batch_size}")
         return None
     except Exception as e:
-        print(f"ERROR running benchmark for batch_size={batch_size}: {e}")
+        print(f"ERROR running benchmark for concurrency={batch_size}: {e}")
         return None
 
 
@@ -132,6 +185,12 @@ def main():
     parser.add_argument('--timeout', type=int, default=600, help='Timeout per batch size in seconds (default: 600)')
     parser.add_argument('--skip-on-timeout', action='store_true', help='Skip remaining batch sizes if one times out')
     
+    # Built-in benchmark mode options
+    parser.add_argument('--random-input-len', type=int, help='Random input sequence length (e.g., 512, 1024, 2048)')
+    parser.add_argument('--random-output-len', type=int, help='Random output sequence length (e.g., 128, 512, 1024)')
+    parser.add_argument('--num-prompts', type=int, default=100, help='Number of prompts for built-in mode (default: 100)')
+    parser.add_argument('--use-builtin', action='store_true', help='Force use of built-in benchmark mode')
+    
     args = parser.parse_args()
     
     # Update output path to use output-dir if output doesn't have a directory
@@ -149,17 +208,36 @@ def main():
     else:
         batch_sizes = list(range(args.min_batch, args.max_batch + 1, args.step))
     
+    # Determine mode (only use builtin if explicitly requested)
+    use_builtin = args.use_builtin
+    mode_name = "Built-in vLLM (requires vllm CLI)" if use_builtin else "Custom API (HTTP requests to Docker)"
+    
     print(f"\n{'='*80}")
-    print(f"BATCH SIZE SWEEP")
+    print(f"BATCH SIZE SWEEP - {mode_name}")
     print(f"{'='*80}")
     print(f"Batch sizes to test: {batch_sizes}")
-    print(f"Max tokens per request: {args.max_tokens}")
+    if use_builtin:
+        print(f"Num prompts: {args.num_prompts}")
+    if args.random_input_len:
+        print(f"Input length: {args.random_input_len} tokens")
+    if args.random_output_len:
+        print(f"Output length: {args.random_output_len} tokens")
+    elif not use_builtin:
+        print(f"Max tokens per request: {args.max_tokens}")
     print(f"{'='*80}\n")
     
     results = []
     
     for batch_size in batch_sizes:
-        result = run_benchmark_for_batch_size(batch_size, args.max_tokens, args.timeout)
+        result = run_benchmark_for_batch_size(
+            batch_size, 
+            args.max_tokens, 
+            args.timeout,
+            random_input_len=args.random_input_len,
+            random_output_len=args.random_output_len,
+            use_builtin=use_builtin,
+            num_prompts=args.num_prompts
+        )
         if result and result['total_system_throughput'] is not None:
             results.append(result)
             print(f"\n✓ Batch size {batch_size}: "

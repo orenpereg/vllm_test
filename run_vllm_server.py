@@ -7,7 +7,7 @@ import sys
 import os
 
 # Configuration
-MODEL_NAME = "meta-llama/Llama-3.2-1B-Instruct"  # Change to your desired model
+MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"  # Change to your desired model
 HOST = "0.0.0.0"
 PORT = 8000
 TENSOR_PARALLEL_SIZE = 1  # Start with 1 GPU, change to 4 once working
